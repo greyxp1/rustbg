@@ -1,5 +1,5 @@
-use shared::error::{ConnectionExt, write_wire_diagnostic};
-use shared::io::write_stderr;
+use crate::error::{ConnectionExt, write_wire_diagnostic};
+use crate::io::write_stderr;
 use wllib::dispatch::EventHandler;
 use wllib::fmt_lite::StringOnStack;
 use wllib::protocols::{wl_shm, wl_shm_pool, wl_surface, zwlr_layer_surface_v1};
@@ -25,7 +25,6 @@ pub struct Global {
 // abstration around wl_output
 #[derive(Default)]
 pub struct Output {
-  pub global_name: u32,
   pub output_id: u32,
   pub wl_surface_id: u32,
   pub layer_surface_id: u32,
@@ -189,7 +188,6 @@ impl GlobalHandler for State {
         match bind(conn, name, interface, clamp_version(4, version), id) {
           Ok(()) => {
             self.outputs[self.output_len] = Output {
-              global_name: name,
               output_id: id,
               ..Default::default()
             };

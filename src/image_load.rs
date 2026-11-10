@@ -6,9 +6,9 @@ use rustix::io::read;
 use rustix::pipe::{PipeFlags, pipe_with};
 use rustix::process::{Pid, WaitOptions, waitpid};
 use rustix::stdio;
-use shared::exit;
-use shared::signal::{SIG_DFL, SIGPIPE, signal};
-use shared::syscall::{Fork, execvp, fork};
+use crate::syscall::exit;
+use crate::syscall::signal::{SIG_DFL, SIGPIPE, signal};
+use crate::syscall::{Fork, execvp, fork};
 use wllib::error::SysResultExt;
 use wllib::fmt_lite::StringOnStack;
 
@@ -18,7 +18,7 @@ use crate::state::Config;
 // this was a bit hard to follow so im documenting for my own reference
 // we:
 // 1. create a unix pipe
-// 2. spawn the dump-bgra child process (fork + execvp)
+// 2. spawn FFmpeg (fork + execvp)
 // 3. connect it's write end (stdout) to the write end of the pipe
 // 4. then read the raw bgra pixels from our read end, directly into the mmap_slice
 fn exec_and_read<const N: usize>(
@@ -77,7 +77,6 @@ fn exec_and_read<const N: usize>(
   Ok(())
 }
 
-#[cfg(feature = "ffmpeg")]
 fn run_ffmpeg(
   out_width: u32,
   out_height: u32,
@@ -128,35 +127,6 @@ fn run_ffmpeg(
   exec_and_read(argv, buffer)
 }
 
-#[cfg(not(feature = "ffmpeg"))]
-fn run_dump_bgra(
-  out_width: u32,
-  out_height: u32,
-  buffer: &mut [u8],
-  fill: bool,
-  path: StringOnStack<256>,
-) -> Result<(), AppError> {
-  let mut dim_str = StringOnStack::<21>::new();
-  dim_str.push(out_width).push("x").push(out_height);
-  let mut mode_str = StringOnStack::<5>::new();
-  if fill {
-    mode_str.push("fill");
-  } else {
-    mode_str.push("fit");
-  }
-
-  // build dump-bgra argument vector: scale image to raw bgra pixels and stream to stdout
-  let argv: [*const c_char; 6] = [
-    c"dump-bgra".as_ptr(),
-    dim_str.as_ptr(),
-    mode_str.as_ptr(),
-    path.as_ptr(),
-    c"-".as_ptr(),
-    ptr::null(),
-  ];
-  exec_and_read(argv, buffer)
-}
-
 pub fn load_and_scale(
   out_width: u32,
   out_height: u32,
@@ -166,13 +136,5 @@ pub fn load_and_scale(
   let path = config.image_path;
   let fill = config.fill;
 
-  #[cfg(not(feature = "ffmpeg"))]
-  {
-    run_dump_bgra(out_width, out_height, buffer, fill, path)
-  }
-
-  #[cfg(feature = "ffmpeg")]
-  {
-    run_ffmpeg(out_width, out_height, buffer, fill, path)
-  }
+  run_ffmpeg(out_width, out_height, buffer, fill, path)
 }

@@ -35,7 +35,6 @@ name = "rustbg"
 version = "1.0.0"
 dependencies = [
  "rustix",
- "shared",
  "wllib",
 ]
 
@@ -50,14 +49,6 @@ dependencies = [
  "libc",
  "linux-raw-sys",
  "windows-sys",
-]
-
-[[package]]
-name = "shared"
-version = "1.0.0"
-dependencies = [
- "rustix",
- "wllib",
 ]
 
 [[package]]
@@ -78,6 +69,7 @@ dependencies = [
 [[package]]
 name = "wllib"
 version = "0.1.0"
+source = "git+https://github.com/spaceavenue/wllib.git?rev=b6a0437b84b3508922265bfdc0fc162d133c11bb#b6a0437b84b3508922265bfdc0fc162d133c11bb"
 dependencies = [
  "rustix",
 ]

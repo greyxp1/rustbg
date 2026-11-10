@@ -1,17 +1,22 @@
 #![no_std]
 #![no_main]
 
-pub mod error;
-pub mod image_load;
-pub mod shm;
-pub mod state;
+mod cli;
+mod entry;
+mod env;
+mod error;
+mod io;
+mod syscall;
+mod image_load;
+mod shm;
+mod state;
 
 use core::ffi::{c_char, c_int};
 
 use rustix::fs::{Access, access};
-use shared::cli::{Arg, ArgParser, get_args_iter};
-use shared::error::{ConnectionExt, write_wire_diagnostic};
-use shared::io::write_stderr;
+use crate::cli::{Arg, ArgParser, get_args_iter};
+use crate::error::{ConnectionExt, write_wire_diagnostic};
+use crate::io::write_stderr;
 use wllib::dispatch::dispatch_once;
 use wllib::error::WireError::ConnectionClosed;
 use wllib::protocols::{wl_compositor, wl_surface, zwlr_layer_shell_v1, zwlr_layer_surface_v1};
@@ -65,7 +70,7 @@ pub unsafe extern "C" fn main(argc: isize, argv: *const *mut c_char) -> c_int {
     return write_usage();
   }
 
-  let mut conn = match shared::connect_wayland() {
+  let mut conn = match crate::env::connect_wayland() {
     Ok(c) => c,
     Err(e) => {
       write_wire_diagnostic("[rustbg]", &e);
@@ -80,7 +85,7 @@ pub unsafe extern "C" fn main(argc: isize, argv: *const *mut c_char) -> c_int {
     return 1;
   }
 
-  // setup layer surfaces and gamma control for all monitors.
+  // Set up layer surfaces for all monitors.
   for i in 0..state.output_len {
     // alloc ids for the new wl_surface (from compositor) and layer surface.
     let surf_id = conn.alloc_id();

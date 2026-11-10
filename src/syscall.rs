@@ -138,20 +138,6 @@ pub unsafe fn execvp(path: *const c_char, argv: *const *const c_char) -> Errno {
   unsafe { search_path_and_exec(path, argv, get_envp()) }
 }
 
-/// Execute an execve syscall, searching `PATH` if `path` is not absolute and passing
-/// additional environment pointed to by `envp`.
-///
-/// # Safety
-/// `path` must point to a null-terminated C string.
-/// `argv` must point to a null-terminated array of null-terminated string pointers.
-pub unsafe fn execvpe(
-  path: *const c_char,
-  argv: *const *const c_char,
-  envp: *const *const c_char,
-) -> Errno {
-  unsafe { search_path_and_exec(path, argv, envp) }
-}
-
 pub mod exit {
 
   use super::{SYS_EXIT_GROUP, asm};
@@ -178,13 +164,6 @@ pub mod exit {
       unsafe { c_exit(code) }
     }
   }
-
-  /// Write an error message to stderr and exit with code 1.
-  #[inline]
-  pub fn die(msg: &str) -> ! {
-    crate::io::write_stderr(msg);
-    exit(1)
-  }
 }
 
 pub mod signal {
@@ -194,10 +173,7 @@ pub mod signal {
   // a custom handler in particular requires SA_RESTORER in sa_flags, and sa_restorer pointing to
   // something that calls SYS_rt_sigreturn.
   use super::{Errno, SYS_RT_SIGACTION, asm, c_int, check_ret, naked_asm, ptr};
-  pub const SIGHUP: c_int = 1;
-  pub const SIGUSR1: c_int = 10;
   pub const SIGPIPE: c_int = 13;
-  pub const SIGCHLD: c_int = 17;
 
   pub const SIG_DFL: usize = 0;
   pub const SIG_IGN: usize = 1;

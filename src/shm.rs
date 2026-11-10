@@ -40,7 +40,7 @@ pub fn get_image_fd(out_width: u32, out_height: u32, config: &Config) -> Result<
   }
   .syserr("mmap")?;
 
-  // get a byte slice from the mmap, spawn dump-bgra/ffmpeg, fill the mmap'd region directly,
+  // get a byte slice from the mmap, spawn FFmpeg, fill the mmap'd region directly,
   // unmap file
   let mmap_slice = unsafe { slice::from_raw_parts_mut(mmap_ptr.cast::<u8>(), size) };
   let result = image_load::load_and_scale(out_width, out_height, mmap_slice, config);

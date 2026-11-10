@@ -4,13 +4,9 @@ use core::ffi::{CStr, c_char};
 use core::sync::atomic::{AtomicPtr, Ordering};
 use core::{ptr, str};
 
-use rustix::fs::{Mode, OFlags, open};
-use rustix::io::{Errno, read};
 use wllib::error::WireError;
 use wllib::fmt_lite::StringOnStack;
 use wllib::transport::Connection;
-
-const ENVIRON_BUF_SIZE: usize = 4096;
 
 static ENVP: AtomicPtr<*const c_char> = AtomicPtr::new(ptr::null_mut());
 
@@ -26,11 +22,7 @@ pub fn get_envp() -> *const *const c_char {
 
 /// Fetch an environment variable into a `StringOnStack`.
 pub fn get_env<const N: usize>(key: &str, out: &mut StringOnStack<N>) -> bool {
-  let envp = ENVP.load(Ordering::Acquire);
-  if !envp.is_null() && scan_envp(envp, key, out) {
-    return true;
-  }
-  scan_proc_environ(key, out)
+  scan_envp(get_envp(), key, out)
 }
 
 fn scan_envp<const N: usize>(
@@ -52,45 +44,6 @@ fn scan_envp<const N: usize>(
     }
     cur = unsafe { cur.add(1) };
   }
-  false
-}
-
-fn scan_proc_environ<const N: usize>(key: &str, out: &mut StringOnStack<N>) -> bool {
-  let Ok(fd) = open(c"/proc/self/environ", OFlags::RDONLY, Mode::empty()) else {
-    return false;
-  };
-
-  let mut buf = [0u8; ENVIRON_BUF_SIZE];
-  let mut total = 0;
-
-  while total < buf.len() {
-    match read(&fd, &mut buf[total..]) {
-      Ok(0) => break,
-      Ok(n) => total += n,
-      Err(Errno::INTR) => continue,
-      Err(_) => break,
-    }
-  }
-
-  let key_bytes = key.as_bytes();
-
-  for entry in buf[..total].split(|&b| b == 0) {
-    let Some(val) = entry
-      .strip_prefix(key_bytes)
-      .and_then(|v| v.strip_prefix(b"="))
-    else {
-      continue;
-    };
-
-    let Ok(val_str) = str::from_utf8(val) else {
-      return false;
-    };
-
-    out.clear();
-    out.push(val_str);
-    return true;
-  }
-
   false
 }
 

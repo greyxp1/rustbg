@@ -68,3 +68,31 @@ impl ConnectionExt for Connection {
     }
   }
 }
+
+// Application-level errors.
+//
+// Wraps [`wllib::WireError`] for anything related to the wayland connection/protocol. Each
+// variant carries enough context to render a real diagnostic via `write_diagnostic`.
+pub enum AppError {
+  // A failure from the wayland transport/protocol layer.
+  Wire(WireError),
+  // FFmpeg produced fewer bytes than the expected `width * height * 4`.
+  ImageDecodeError,
+}
+
+impl AppError {
+  pub fn write_diagnostic(&self) {
+    match self {
+      AppError::Wire(e) => write_wire_diagnostic("[rustbg]", e),
+      AppError::ImageDecodeError => {
+        write_stderr("[rustbg] image decode error: FFmpeg produced fewer bytes than expected\n")
+      }
+    }
+  }
+}
+
+impl From<WireError> for AppError {
+  fn from(e: WireError) -> Self {
+    AppError::Wire(e)
+  }
+}
