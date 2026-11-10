@@ -7,12 +7,9 @@ rustbg \- static wallpapers for Wayland
 .I IMAGE
 .SH DESCRIPTION
 Displays an image on all connected outputs using the Wayland layer-shell protocol.
-By default, the image is scaled to fit, with black padding.
+Images are scaled to fill the output and center-cropped.
 FFmpeg decodes, scales and optionally blurs the image when loading, then exits.
 .SH OPTIONS
-.TP
-.BR \-f ", " \-\-fill
-Fill the output and center-crop the image.
 .TP
 .BR \-n ", " \-\-namespace " " NAME
 Set the layer-shell namespace used by compositor rules.

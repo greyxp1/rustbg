@@ -24,11 +24,6 @@ in {
             type = lib.types.path;
             description = "Wallpaper image.";
           };
-          fill = lib.mkOption {
-            type = lib.types.bool;
-            default = true;
-            description = "Fill and center-crop instead of fitting the image.";
-          };
           blur = lib.mkOption {
             type = lib.types.ints.between 0 1024;
             default = 0;
@@ -50,7 +45,6 @@ in {
         serviceConfig = {
           ExecStart = utils.escapeSystemdExecArgs (
             ["${lib.getExe cfg.package}" "--namespace" "rustbg-${name}"]
-            ++ lib.optional wallpaper.fill "--fill"
             ++ lib.optionals (wallpaper.blur != 0) ["--blur" (toString wallpaper.blur)]
             ++ [wallpaper.image]
           );

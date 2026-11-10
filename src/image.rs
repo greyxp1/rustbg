@@ -1,14 +1,12 @@
 use core::ffi::c_char;
 use core::ptr;
-use core::slice;
 use rustix::fd::OwnedFd;
-use rustix::fs::{MemfdFlags, ftruncate, memfd_create};
-use rustix::mm::{MapFlags, ProtFlags, mmap, munmap};
+use rustix::fs::{MemfdFlags, memfd_create};
 
 use crate::process::{Fork, exec_ffmpeg, exit, fork, reset_sigpipe};
 use rustix::fs::{Mode, OFlags, open};
-use rustix::io::{Errno, read};
-use rustix::pipe::{PipeFlags, pipe_with};
+use rustix::io::Errno;
+use rustix::pipe::{PipeFlags, SpliceFlags, pipe_with, splice};
 use rustix::process::{Pid, WaitOptions, waitpid};
 use rustix::stdio;
 use wllib::error::SysResultExt;
@@ -17,9 +15,10 @@ use wllib::fmt_lite::StringOnStack;
 use crate::cli::Config;
 use crate::error::AppError;
 
-fn exec_and_read<const N: usize>(
+fn exec_into_fd<const N: usize>(
   argv: [*const c_char; N],
-  buffer: &mut [u8],
+  fd: &OwnedFd,
+  size: usize,
 ) -> Result<(), AppError> {
   let (read_fd, write_fd) = pipe_with(PipeFlags::CLOEXEC).syserr("pipe")?;
 
@@ -46,10 +45,17 @@ fn exec_and_read<const N: usize>(
 
       let mut offset = 0usize;
       let result = loop {
-        if offset == buffer.len() {
+        if offset == size {
           break Ok(());
         }
-        match read(&read_fd, &mut buffer[offset..]) {
+        match splice(
+          &read_fd,
+          None,
+          fd,
+          None,
+          size - offset,
+          SpliceFlags::empty(),
+        ) {
           Ok(0) => break Ok(()),
           Ok(count) => offset += count,
           Err(Errno::INTR) => continue,
@@ -57,7 +63,7 @@ fn exec_and_read<const N: usize>(
         }
       };
 
-      // Always close the pipe and reap the child, including after a read error.
+      // Always close the pipe and reap the child, including after a transfer error.
       drop(read_fd);
       loop {
         match waitpid(Pid::from_raw(pid as i32), WaitOptions::empty()) {
@@ -68,9 +74,9 @@ fn exec_and_read<const N: usize>(
           }
         }
       }
-      result.syserr("read")?;
+      result.syserr("splice")?;
 
-      if offset != buffer.len() {
+      if offset != size {
         return Err(AppError::ImageDecodeError);
       }
     }
@@ -81,41 +87,40 @@ fn exec_and_read<const N: usize>(
 fn load_and_scale(
   out_width: u32,
   out_height: u32,
-  buffer: &mut [u8],
+  fd: &OwnedFd,
+  size: usize,
   config: &Config,
 ) -> Result<(), AppError> {
-  let mut filter = StringOnStack::<160>::new();
+  let mut filter = StringOnStack::<256>::new();
 
+  // Retain the source pixels covering the target before scaling, rounding outward.
   filter
-    .push("scale=")
+    .push("crop='min(iw,ceil(ih*")
+    .push(out_width)
+    .push("/")
+    .push(out_height)
+    .push("))':'min(ih,ceil(iw*")
+    .push(out_height)
+    .push("/")
+    .push(out_width)
+    .push("))':exact=1,scale=")
+    .push(out_width)
+    .push(":")
+    .push(out_height)
+    // Preserve the aspect ratio when the integer source crop differs from the target.
+    .push(":force_original_aspect_ratio=increase,crop=")
     .push(out_width)
     .push(":")
     .push(out_height);
-
-  match config.fill {
-    true => {
-      filter
-        .push(":force_original_aspect_ratio=increase,crop=")
-        .push(out_width)
-        .push(":")
-        .push(out_height);
-    }
-    false => {
-      filter
-        .push(":force_original_aspect_ratio=decrease,pad=")
-        .push(out_width)
-        .push(":")
-        .push(out_height)
-        .push(":(ow-iw)/2:(oh-ih)/2");
-    }
-  }
 
   if config.blur != 0 {
     filter.push(",gblur=sigma=").push(config.blur);
   }
 
-  let argv: [*const c_char; 11] = [
+  let argv: [*const c_char; 13] = [
     c"ffmpeg".as_ptr(),
+    c"-filter_threads".as_ptr(),
+    c"1".as_ptr(),
     c"-i".as_ptr(),
     config.image_path.as_ptr(),
     c"-vf".as_ptr(),
@@ -127,7 +132,7 @@ fn load_and_scale(
     c"-".as_ptr(),
     ptr::null(),
   ];
-  exec_and_read(argv, buffer)
+  exec_into_fd(argv, fd, size)
 }
 
 pub fn get_image_fd(out_width: u32, out_height: u32, config: &Config) -> Result<OwnedFd, AppError> {
@@ -140,25 +145,7 @@ pub fn get_image_fd(out_width: u32, out_height: u32, config: &Config) -> Result<
   )
   .syserr("memfd_create")?;
 
-  ftruncate(&fd, size as u64).syserr("ftruncate")?;
-
-  let mmap_ptr = unsafe {
-    mmap(
-      core::ptr::null_mut(),
-      size,
-      ProtFlags::READ | ProtFlags::WRITE,
-      MapFlags::SHARED,
-      &fd,
-      0,
-    )
-  }
-  .syserr("mmap")?;
-
-  // Decode directly into shared memory and unmap it even when decoding fails.
-  let mmap_slice = unsafe { slice::from_raw_parts_mut(mmap_ptr.cast::<u8>(), size) };
-  let result = load_and_scale(out_width, out_height, mmap_slice, config);
-  unsafe { munmap(mmap_ptr, size) }.syserr("munmap")?;
-  result?;
+  load_and_scale(out_width, out_height, &fd, size, config)?;
 
   Ok(fd)
 }
