@@ -10,6 +10,7 @@ use wllib::wire::{Message, read_u32};
 use crate::shm;
 
 const MAX_OUTPUTS: usize = 8;
+const WL_BUFFER_DESTROY: u16 = 0;
 
 // tracks registered object ids
 #[derive(Default)]
@@ -29,6 +30,7 @@ pub struct Output {
   pub wl_surface_id: u32,
   pub layer_surface_id: u32,
   pub buffer_id: u32,
+  pub size: (u32, u32),
 }
 
 // config
@@ -94,7 +96,7 @@ impl State {
     ack.write_u32(serial);
     conn.send_logged(&ack, None);
 
-    if width == 0 || height == 0 {
+    if width == 0 || height == 0 || out.size == (width, height) {
       return;
     }
 
@@ -130,10 +132,8 @@ impl State {
     // destroy the pool object, buffer remains valid tho
     conn.send_logged(&Message::new(pool_id, wl_shm_pool::request::DESTROY), None);
 
-    out.buffer_id = buffer_id;
     let wl_surface_id = out.wl_surface_id;
 
-    // destroy the pool object, buffer remains valid tho
     let mut attach = Message::new(wl_surface_id, wl_surface::request::ATTACH);
     attach.write_u32(buffer_id);
     attach.write_i32(0);
@@ -153,6 +153,16 @@ impl State {
       &Message::new(wl_surface_id, wl_surface::request::COMMIT),
       None,
     );
+
+    // Replace the surface content before releasing the previous buffer object.
+    if out.buffer_id != 0 {
+      conn.send_logged(
+        &Message::new(out.buffer_id, WL_BUFFER_DESTROY),
+        None,
+      );
+    }
+    out.buffer_id = buffer_id;
+    out.size = (width, height);
   }
 }
 impl GlobalHandler for State {
