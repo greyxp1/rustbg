@@ -7,7 +7,6 @@ use crate::io::{write_stderr, write_stdout};
 pub struct Config {
   pub image_path: StringOnStack<256>,
   pub namespace: StringOnStack<256>,
-  pub fill: bool,
   pub blur: u32,
 }
 impl Default for Config {
@@ -15,7 +14,6 @@ impl Default for Config {
     Self {
       image_path: StringOnStack::new(),
       namespace: *StringOnStack::new().push_str("wallpaper"),
-      fill: false,
       blur: 0,
     }
   }
@@ -27,7 +25,6 @@ const HELP: &str = concat!(
   "Arguments:\n",
   "  IMAGE                 Wallpaper image\n\n",
   "Options:\n",
-  "  -f, --fill            Fill and center-crop\n",
   "  -n, --namespace NAME  Layer name [default: wallpaper]\n",
   "      --blur SIGMA      Blur strength, 0-1024 [default: 0]\n",
   "  -h, --help            Show help\n",
@@ -56,7 +53,7 @@ pub unsafe fn parse(argc: isize, argv: *const *mut c_char) -> Result<Config, i32
     let arg = arg.map_err(|_| invalid("arguments must be UTF-8"))?;
     if !positional && arg == "--" {
       positional = true;
-    } else if !positional && arg == "--help" {
+    } else if !positional && (arg == "--help" || arg.starts_with("-h")) {
       write_stdout(HELP);
       return Err(0);
     } else if !positional && arg.starts_with('-') && arg != "-" {
@@ -66,22 +63,7 @@ pub unsafe fn parse(argc: isize, argv: *const *mut c_char) -> Result<Config, i32
           .map_or((long, None), |(k, v)| (k, Some(v)));
         (key, value)
       } else {
-        let mut cluster = &arg[1..];
-        loop {
-          if let Some(rest) = cluster.strip_prefix('f') {
-            config.fill = true;
-            cluster = rest;
-          } else if cluster.starts_with('h') {
-            write_stdout(HELP);
-            return Err(0);
-          } else {
-            break;
-          }
-        }
-        if cluster.is_empty() {
-          continue;
-        }
-        if let Some(value) = cluster.strip_prefix('n') {
+        if let Some(value) = arg.strip_prefix("-n") {
           (
             "namespace",
             if value.is_empty() { None } else { Some(value) },
@@ -90,10 +72,6 @@ pub unsafe fn parse(argc: isize, argv: *const *mut c_char) -> Result<Config, i32
           return Err(invalid("unknown option"));
         }
       };
-      if option == "fill" && attached.is_none() {
-        config.fill = true;
-        continue;
-      }
       if option != "namespace" && option != "blur" {
         return Err(invalid("unknown option"));
       }
