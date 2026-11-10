@@ -26,3 +26,8 @@ pub fn write_stderr(msg: impl AsRef<[u8]>) {
   let fd = unsafe { stdio::stderr() };
   let _ = write_fd(fd, msg);
 }
+
+pub fn write_stdout(msg: impl AsRef<[u8]>) {
+  let fd = unsafe { stdio::stdout() };
+  let _ = write_fd(fd, msg);
+}

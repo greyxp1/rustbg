@@ -1,0 +1,32 @@
+.TH RUSTBG 1
+.SH NAME
+rustbg \- static wallpapers for Wayland
+.SH SYNOPSIS
+.B rustbg
+.RI [ OPTIONS ]
+.I IMAGE
+.SH DESCRIPTION
+Displays an image on all connected outputs using the Wayland layer-shell protocol.
+By default, the image is scaled to fit, with black padding.
+FFmpeg decodes, scales and optionally blurs the image when loading, then exits.
+.SH OPTIONS
+.TP
+.BR \-f ", " \-\-fill
+Fill the output and center-crop the image.
+.TP
+.BR \-n ", " \-\-namespace " " NAME
+Set the layer-shell namespace used by compositor rules.
+The default is
+.BR wallpaper .
+.TP
+.BI \-\-blur " SIGMA"
+Apply Gaussian blur with a sigma of 0 to 1024 output pixels.
+The default is 0, which disables blur.
+.TP
+.BR \-h ", " \-\-help
+Show help and exit.
+.SH REQUIREMENTS
+Requires FFmpeg on PATH and a compositor supporting wlr-layer-shell.
+.SH EXIT STATUS
+Returns 0 on normal exit or when showing help, and 1 for invalid arguments or
+startup failures.
