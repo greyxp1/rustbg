@@ -5,18 +5,18 @@ mod cli;
 mod entry;
 mod env;
 mod error;
-mod io;
-mod syscall;
 mod image_load;
+mod io;
 mod shm;
 mod state;
+mod syscall;
 
 use core::ffi::{c_char, c_int};
 
-use rustix::fs::{Access, access};
 use crate::cli::{Arg, ArgParser, get_args_iter};
 use crate::error::{ConnectionExt, write_wire_diagnostic};
-use crate::io::write_stderr;
+use crate::io::{write_stderr, write_stdout};
+use rustix::fs::{Access, access};
 use wllib::dispatch::dispatch_once;
 use wllib::error::WireError::ConnectionClosed;
 use wllib::protocols::{wl_compositor, wl_surface, zwlr_layer_shell_v1, zwlr_layer_surface_v1};
@@ -26,7 +26,7 @@ use wllib::wire::Message;
 use crate::state::{Config, State};
 
 fn write_usage() -> c_int {
-  write_stderr("Usage: rustbg [-f|--fill] [-n|--namespace NAME] [--blur SIGMA] IMAGE\n");
+  write_stderr("Usage: rustbg [OPTIONS] IMAGE\nTry 'rustbg --help' for more information.\n");
   1
 }
 
@@ -43,6 +43,20 @@ pub unsafe extern "C" fn main(argc: isize, argv: *const *mut c_char) -> c_int {
   let mut parser = ArgParser::new(args_iter);
   while let Some(arg) = parser.next_arg() {
     match arg {
+      Arg::Short('h') | Arg::Long("help") => {
+        write_stdout(concat!(
+          "Static wallpapers for Wayland\n\n",
+          "Usage: rustbg [OPTIONS] IMAGE\n\n",
+          "Arguments:\n",
+          "  IMAGE                 Wallpaper image\n\n",
+          "Options:\n",
+          "  -f, --fill            Fill and center-crop\n",
+          "  -n, --namespace NAME  Layer name [default: wallpaper]\n",
+          "      --blur SIGMA      Blur strength, 0-1024 [default: 0]\n",
+          "  -h, --help            Show help\n",
+        ));
+        return 0;
+      }
       Arg::Short('f') | Arg::Long("fill") => config.fill = true,
       Arg::Long("blur") => {
         let Some(blur) = parser
