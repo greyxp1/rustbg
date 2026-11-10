@@ -1,23 +1,17 @@
 [build]
-target = "x86_64-unknown-linux-musl"
-
-[unstable]
-build-std = ["core", "panic_abort", "compiler_builtins"]
-build-std-features = ["optimize_for_size", "compiler-builtins-mem"]
-
-[target.x86_64-unknown-linux-musl]
+target = "x86_64-unknown-linux-gnu"
 rustflags = [
     "-C", "relocation-model=static",
     "-C", "force-unwind-tables=no",
     "-Z", "location-detail=none",
     "-Z", "fmt-debug=none",
-    "-C", "link-self-contained=no",
     "-C", "link-arg=-nostdlib",
     "-C", "link-arg=-static",
-    "-C", "link-arg=-Wl,-z,norelro",
-    "-C", "link-arg=-Wl,-z,noseparate-code",
     "-C", "link-arg=-Wl,--gc-sections",
     "-C", "link-arg=-Wl,--build-id=none",
     "-C", "link-arg=-Wl,--no-eh-frame-hdr",
-    "-C", "link-arg=-Qunused-arguments",
 ]
+
+[unstable]
+build-std = ["core", "panic_abort", "compiler_builtins"]
+build-std-features = ["optimize_for_size", "compiler-builtins-mem"]
