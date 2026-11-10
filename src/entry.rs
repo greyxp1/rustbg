@@ -21,7 +21,7 @@ global_asm!(
 
 unsafe extern "C" fn rust_entry(argc: isize, argv: *const *mut c_char) -> i32 {
   let envp = unsafe { argv.add(argc as usize + 1).cast::<*const c_char>() };
-  set_envp(envp);
+  unsafe { set_envp(envp) };
   unsafe { main(argc, argv) }
 }
 
