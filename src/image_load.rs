@@ -1,14 +1,14 @@
 use core::ffi::c_char;
 use core::ptr;
 
+use crate::syscall::exit;
+use crate::syscall::signal::{SIG_DFL, SIGPIPE, signal};
+use crate::syscall::{Fork, execvp, fork};
 use rustix::fs::{Mode, OFlags, open};
 use rustix::io::read;
 use rustix::pipe::{PipeFlags, pipe_with};
 use rustix::process::{Pid, WaitOptions, waitpid};
 use rustix::stdio;
-use crate::syscall::exit;
-use crate::syscall::signal::{SIG_DFL, SIGPIPE, signal};
-use crate::syscall::{Fork, execvp, fork};
 use wllib::error::SysResultExt;
 use wllib::fmt_lite::StringOnStack;
 
@@ -77,14 +77,13 @@ fn exec_and_read<const N: usize>(
   Ok(())
 }
 
-fn run_ffmpeg(
+pub fn load_and_scale(
   out_width: u32,
   out_height: u32,
   buffer: &mut [u8],
-  fill: bool,
-  path: StringOnStack<256>,
+  config: &Config,
 ) -> Result<(), AppError> {
-  let mut filter = StringOnStack::<96>::new();
+  let mut filter = StringOnStack::<160>::new();
 
   filter
     .push("scale=")
@@ -92,7 +91,7 @@ fn run_ffmpeg(
     .push(":")
     .push(out_height);
 
-  match fill {
+  match config.fill {
     true => {
       filter
         .push(":force_original_aspect_ratio=increase,crop=")
@@ -110,11 +109,15 @@ fn run_ffmpeg(
     }
   }
 
+  if config.blur != 0 {
+    filter.push(",gblur=sigma=").push(config.blur);
+  }
+
   // build ffmpeg argument vector
   let argv: [*const c_char; 11] = [
     c"ffmpeg".as_ptr(),
     c"-i".as_ptr(),
-    path.as_ptr(),
+    config.image_path.as_ptr(),
     c"-vf".as_ptr(),
     filter.as_ptr(),
     c"-f".as_ptr(),
@@ -125,16 +128,4 @@ fn run_ffmpeg(
     ptr::null(),
   ];
   exec_and_read(argv, buffer)
-}
-
-pub fn load_and_scale(
-  out_width: u32,
-  out_height: u32,
-  buffer: &mut [u8],
-  config: &Config,
-) -> Result<(), AppError> {
-  let path = config.image_path;
-  let fill = config.fill;
-
-  run_ffmpeg(out_width, out_height, buffer, fill, path)
 }

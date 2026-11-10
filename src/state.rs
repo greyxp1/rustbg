@@ -36,6 +36,7 @@ pub struct Config {
   pub image_path: StringOnStack<256>,
   pub namespace: StringOnStack<256>,
   pub fill: bool,
+  pub blur: u32,
 }
 // default config
 impl Default for Config {
@@ -44,6 +45,7 @@ impl Default for Config {
       image_path: StringOnStack::new(),
       namespace: *StringOnStack::new().push_str("wallpaper"),
       fill: false,
+      blur: 0,
     }
   }
 }

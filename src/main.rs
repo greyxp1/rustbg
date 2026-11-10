@@ -25,9 +25,8 @@ use wllib::wire::Message;
 
 use crate::state::{Config, State};
 
-
 fn write_usage() -> c_int {
-  write_stderr("Usage: rustbg [-f | --fill] [-n | --namespace <name>] <image path>\n");
+  write_stderr("Usage: rustbg [-f|--fill] [-n|--namespace NAME] [--blur SIGMA] IMAGE\n");
   1
 }
 
@@ -45,6 +44,17 @@ pub unsafe extern "C" fn main(argc: isize, argv: *const *mut c_char) -> c_int {
   while let Some(arg) = parser.next_arg() {
     match arg {
       Arg::Short('f') | Arg::Long("fill") => config.fill = true,
+      Arg::Long("blur") => {
+        let Some(blur) = parser
+          .next_val()
+          .and_then(|value| value.parse::<u32>().ok())
+          .filter(|&value| value <= 1024)
+        else {
+          write_stderr("[rustbg] blur must be an integer between 0 and 1024\n");
+          return write_usage();
+        };
+        config.blur = blur;
+      }
       Arg::Short('n') | Arg::Long("namespace") => {
         let Some(namespace) = parser.next_val() else {
           write_stderr("[rustbg] no namespace provided.");
