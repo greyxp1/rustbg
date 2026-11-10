@@ -1,8 +1,0 @@
-[package]
-name = "rust-randr"
-version.workspace = true
-edition.workspace = true
-
-[dependencies]
-wllib = { workspace = true }
-shared = { workspace = true }

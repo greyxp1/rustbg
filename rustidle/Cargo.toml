@@ -1,9 +1,0 @@
-[package]
-name = "rustidle"
-version.workspace = true
-edition.workspace = true
-
-[dependencies]
-rustix = { workspace = true, features = ["fs", "event"] }
-wllib = { workspace = true }
-shared = { workspace = true }
