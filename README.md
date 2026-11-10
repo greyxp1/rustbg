@@ -1,5 +1,5 @@
 # What
-This is a small collection of rust-based wayland utilities.
+Static Wayland wallpapers.
 
 ## rustbg
 ```
@@ -9,33 +9,11 @@ Sets the wallpaper using the wlr-layer-shell protocol. Image loading and decodin
 - Use `-f / --fill` to fill/center-crop the wallpaper, omit for a "fit" mode where the empty space is padded with black pixels.
 - Use `-n <name> / --namespace <name> / --namespace=<name>` to specify the layer surface's namespace.
 
-## rustemp
-Setting the color temperature on wayland, using the wlr-gamma-control protocol. Takes only one argument: the color temperature.
-
-## rustidle
-```
-rustidle <config_path>
-```
-An idle management daemon using the ext-idle-notify-v1 protocol.
-Reads a config file and parses the entries to create timers. 
-Entry format: 
-```
-timeout <time in seconds> <command>
-resume <time in seconds> <command>
-```
-`command` is passed verbatim to `sh -c`.
-A `resume` can be paired with a `timeout` by providing the same time for both.
-
-## rust-randr
-A `wlr-randr`-like utility. Just dumps output info.
-
----
-
 # Building
 The musl target is needed for building. This is subject to change however, since it doesnt actually link against the C runtime or use libc functions.
 
 NOTE: This is a personal project, so don't expect stability or the best code quality :P
-Stick to something stable and tested, with more features like [swaybg](https://github.com/swaywm/swaybg), or for a more minimal option, [wbg](https://codeberg.org/dnkl/wbg). For idle management, there's [swayidle](https://github.com/swaywm/swayidle). For gamma management, there's [wlsunset](https://sr.ht/~kennylevinsen/wlsunset).
+Stick to something stable and tested, with more features like [swaybg](https://github.com/swaywm/swaybg), or for a more minimal option, [wbg](https://codeberg.org/dnkl/wbg).
 
 # Why And How
 Fun :3  
