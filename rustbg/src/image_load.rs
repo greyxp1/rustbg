@@ -10,7 +10,7 @@ use shared::exit;
 use shared::signal::{SIG_DFL, SIGPIPE, signal};
 use shared::syscall::{Fork, execvp, fork};
 use wllib::error::SysResultExt;
-use wllib::fmt_lite::StringOnStack;
+use shared::fmt_lite::StringOnStack;
 
 use crate::error::AppError;
 use crate::state::Config;

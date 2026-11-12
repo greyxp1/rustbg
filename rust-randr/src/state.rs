@@ -1,11 +1,11 @@
-use shared::error::{ConnectionExt, write_wire_diagnostic};
+use shared::fmt_lite::StringOnStack;
 use shared::io::{write_stderr, write_stdout};
 use wllib::dispatch::EventHandler;
-use wllib::fmt_lite::StringOnStack;
+use wllib::error::WireError;
 use wllib::protocols::{wl_output, zxdg_output_manager_v1, zxdg_output_v1};
 use wllib::registry::{GlobalHandler, bind, clamp_version};
-use wllib::transport::Connection;
-use wllib::wire::{Message, read_i32, read_str, read_u32};
+use wllib::transport::{Connection, Ctx};
+use wllib::wire::{Message, Writer};
 
 const MAX_OUTPUTS: usize = 8;
 
@@ -126,77 +126,65 @@ impl State {
 
   // send `get_xdg_output(new_id, wl_output_id)` for every bound output, once the manager global
   // (if any) is known. called once after `crawl()` returns.
-  pub fn request_xdg_outputs(&mut self, conn: &mut Connection) {
-    if self.global.xdg_output_manager_id == 0 {
-      return;
+  pub fn request_xdg_outputs(&mut self, conn: &mut Connection) -> Result<(), WireError> {
+    let manager_id = self.global.xdg_output_manager_id;
+    if manager_id == 0 {
+      return Ok(());
     }
     for out in &mut self.outputs[..self.output_len] {
-      let id = conn.alloc_id();
-      let mut msg = Message::new(
-        self.global.xdg_output_manager_id,
-        zxdg_output_manager_v1::request::GET_XDG_OUTPUT,
-      );
-      msg.write_u32(id);
-      msg.write_u32(out.output_id);
-      conn.send_logged(&msg, None);
+      let id = conn.alloc_id()?;
+      let mut w = Writer::<16>::new(manager_id, zxdg_output_manager_v1::request::GET_XDG_OUTPUT);
+      w.u32(id).u32(out.output_id);
+      conn.send(w.finish()?, &[])?;
       out.xdg_output_id = id;
     }
+    Ok(())
   }
 
   // returns `true` once this call has made the output ready to print (see `Output::is_complete`),
   // so the caller can print it and count it toward `done_count` exactly once.
-  fn handle_output_event(out: &mut Output, opcode: u16, data: &[u8]) -> bool {
-    match opcode {
+  fn handle_output_event(out: &mut Output, msg: &Message<'_>) -> Result<bool, WireError> {
+    let mut r = msg.args();
+    match msg.header.opcode {
       wl_output::event::NAME => {
-        if let Some((content, _)) = read_str(data, 0) {
-          out.name.push(content);
-        }
+        out.name.push(r.str()?);
       }
       wl_output::event::DESCRIPTION => {
-        if let Some((content, _)) = read_str(data, 0) {
-          out.desc.push(content);
-        }
+        out.desc.push(r.str()?);
       }
       wl_output::event::GEOMETRY => {
-        let mut make_len = 0;
-        let mut mode_len = 0;
-        out.geo.x = read_i32(data, 0);
-        out.geo.y = read_i32(data, 4);
-        out.geo.physical_width = read_i32(data, 8);
-        out.geo.physical_height = read_i32(data, 12);
-        out.geo.subpixel = read_i32(data, 16);
-        if let Some((make, consumed)) = read_str(data, 20) {
-          out.geo.make.push(make);
-          make_len = consumed;
-        }
-        if let Some((model, consumed)) = read_str(data, 20 + make_len) {
-          out.geo.model.push(model);
-          mode_len = consumed;
-        }
-        out.geo.transform = read_u32(data, 20 + make_len + mode_len);
+        out.geo.x = r.i32()?;
+        out.geo.y = r.i32()?;
+        out.geo.physical_width = r.i32()?;
+        out.geo.physical_height = r.i32()?;
+        out.geo.subpixel = r.i32()?;
+        out.geo.make.push(r.str()?);
+        out.geo.model.push(r.str()?);
+        out.geo.transform = r.u32()?;
       }
       wl_output::event::MODE => {
-        out.mode.flags = read_u32(data, 0);
-        out.mode.width = read_i32(data, 4);
-        out.mode.height = read_i32(data, 8);
-        out.mode.refresh = read_i32(data, 12);
+        out.mode.flags = r.u32()?;
+        out.mode.width = r.i32()?;
+        out.mode.height = r.i32()?;
+        out.mode.refresh = r.i32()?;
       }
-      wl_output::event::SCALE => out.scale = read_i32(data, 0),
+      wl_output::event::SCALE => out.scale = r.i32()?,
       wl_output::event::DONE => out.wl_done = true,
       _ => (),
     }
-    Self::finish_if_complete(out)
+    Ok(Self::finish_if_complete(out))
   }
 
-  fn handle_xdg_output_event(out: &mut Output, opcode: u16, data: &[u8]) -> bool {
-    match opcode {
+  fn handle_xdg_output_event(out: &mut Output, msg: &Message<'_>) -> Result<bool, WireError> {
+    let mut r = msg.args();
+    match msg.header.opcode {
       zxdg_output_v1::event::LOGICAL_POSITION => {
-        out.logical.x = read_i32(data, 0);
-        out.logical.y = read_i32(data, 4);
+        out.logical.x = r.i32()?;
+        out.logical.y = r.i32()?;
       }
       zxdg_output_v1::event::LOGICAL_SIZE => {
-        out.logical.width = read_i32(data, 0);
-        out.logical.height = read_i32(data, 4);
+        out.logical.width = r.i32()?;
+        out.logical.height = r.i32()?;
         // only ever sent once per property change and always accompanies a full update, so it's a
         // safe, version-independent "logical info is current" signal without needing to also handle
         // the deprecated `done` event.
@@ -204,7 +192,7 @@ impl State {
       }
       _ => (),
     }
-    Self::finish_if_complete(out)
+    Ok(Self::finish_if_complete(out))
   }
 
   fn finish_if_complete(out: &mut Output) -> bool {
@@ -251,7 +239,8 @@ impl State {
       .push("\nTransform: ")
       .push(transform_name(g.transform))
       .push("\nSubpixel: ")
-      .push(subpixel_name(g.subpixel));
+      .push(subpixel_name(g.subpixel))
+      .push("\n");
 
     write_stdout(s);
     true
@@ -261,60 +250,61 @@ impl State {
 impl GlobalHandler for State {
   // bind globals matching interfaces we want. we bind to the minimum of the client's wanted
   // version and the server's advertised version
-  fn on_global(&mut self, conn: &mut Connection, name: u32, interface: &str, version: u32) {
+  fn on_global(
+    &mut self,
+    cx: &mut Ctx<'_>,
+    name: u32,
+    interface: &str,
+    version: u32,
+  ) -> Result<(), WireError> {
     match interface {
       "wl_compositor" => {
-        let id = conn.alloc_id();
-        match bind(conn, name, interface, clamp_version(7, version), id) {
-          Ok(()) => self.global.compositor_id = id,
-          Err(e) => write_wire_diagnostic("rust-randr", &e),
-        }
+        let id = cx.alloc()?;
+        bind(cx, name, interface, clamp_version(7, version), id)?;
+        self.global.compositor_id = id;
       }
       "wl_output" => {
         if self.output_len >= MAX_OUTPUTS {
           write_stderr("Maximum outputs limit reached\n");
-          return;
+          return Ok(());
         }
-        let id = conn.alloc_id();
-        match bind(conn, name, interface, clamp_version(4, version), id) {
-          Ok(()) => {
-            self.outputs[self.output_len] = Output {
-              output_id: id,
-              ..Default::default()
-            };
-            self.output_len += 1;
-          }
-          Err(e) => write_wire_diagnostic("rust-randr", &e),
-        }
+        let id = cx.alloc()?;
+        bind(cx, name, interface, clamp_version(4, version), id)?;
+        self.outputs[self.output_len] = Output {
+          output_id: id,
+          ..Default::default()
+        };
+        self.output_len += 1;
       }
       "zxdg_output_manager_v1" => {
-        let id = conn.alloc_id();
+        let id = cx.alloc()?;
         // only `logical_position`/`logical_size` are wanted.
-        match bind(conn, name, interface, clamp_version(1, version), id) {
-          Ok(()) => self.global.xdg_output_manager_id = id,
-          Err(e) => write_wire_diagnostic("rust-randr", &e),
-        }
+        bind(cx, name, interface, clamp_version(1, version), id)?;
+        self.global.xdg_output_manager_id = id;
       }
       _ => (),
     }
+    Ok(())
   }
 }
 
 impl EventHandler for State {
-  fn handle_event(&mut self, _conn: &mut Connection, sender: u32, opcode: u16, data: &[u8]) {
+  fn handle_event(&mut self, _cx: &mut Ctx<'_>, msg: Message<'_>) -> Result<(), WireError> {
+    let sender = msg.header.object_id;
     let Some(out) = self.outputs[..self.output_len]
       .iter_mut()
       .find(|out| out.output_id == sender || out.xdg_output_id == sender)
     else {
-      return;
+      return Ok(());
     };
     let completed = if out.output_id == sender {
-      State::handle_output_event(out, opcode, data)
+      State::handle_output_event(out, &msg)?
     } else {
-      State::handle_xdg_output_event(out, opcode, data)
+      State::handle_xdg_output_event(out, &msg)?
     };
     if completed {
       self.done_count += 1;
     }
+    Ok(())
   }
 }

@@ -12,25 +12,21 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use rustix::fs::{Access, access};
 use shared::cli::Arg::Value;
 use shared::cli::{ArgParser, get_args_iter};
-use shared::error::{ConnectionExt, write_wire_diagnostic};
 use shared::exit::die;
 use shared::io::write_stderr;
 use shared::signal::{KernelSigaction, sigaction, signal};
 use wllib::dispatch::dispatch_once;
 use wllib::error::SysResultExt;
 use wllib::error::WireError::ConnectionClosed;
-use wllib::protocols::ext_idle_notifier_v1;
 use wllib::registry::crawl;
-use wllib::transport::Connection;
-use wllib::wire::Message;
 
 use crate::config::Config;
+use crate::error::AppError;
 use crate::state::State;
 
 const SIGCHLD: c_int = 17;
 const SIGUSR1: c_int = 10;
 const SIG_IGN: usize = 1;
-
 
 // flag to track the suspended state
 static IS_SUSPENDED: AtomicBool = AtomicBool::new(false);
@@ -43,6 +39,55 @@ extern "C" fn handle_sigusr1(_sig: c_int) {
 fn write_usage() -> c_int {
   write_stderr("Usage: rustidle <config-file>\n");
   1
+}
+
+fn run(config_path: &str) -> Result<(), AppError> {
+  // tells kernel to reap child processes automatically, avoiding waitpid
+  let _ = unsafe { signal(SIGCHLD, SIG_IGN).syserr("sigaction") };
+  // handle SIGUSR1
+  unsafe {
+    let act = KernelSigaction::new(handle_sigusr1 as *const () as usize, 0);
+    if sigaction(SIGUSR1, &act, ptr::null_mut()).is_err() {
+      die("[rustidle] failed to set action handler");
+    }
+  }
+
+  let mut conn = shared::connect_wayland()?;
+  let config = Config::load(config_path)?;
+  let mut state = State::init(config);
+  crawl(&mut conn, &mut state)?;
+
+  state.create_notifications(&mut conn)?;
+  let mut was_suspended = false;
+
+  // main wayland event dispatch loop
+  loop {
+    if IS_SUSPENDED.load(Ordering::Relaxed) {
+      state.destroy_notifications(&mut conn)?;
+      was_suspended = true;
+    }
+
+    while IS_SUSPENDED.load(Ordering::Relaxed) {
+      rustix::event::pause();
+    }
+
+    if was_suspended {
+      state.create_notifications(&mut conn)?;
+      was_suspended = false;
+    }
+
+    match dispatch_once(&mut conn, &mut state) {
+      Ok(()) => (),
+      Err(ConnectionClosed) => break,
+      Err(e) => {
+        if IS_SUSPENDED.load(Ordering::Relaxed) {
+          continue;
+        }
+        return Err(e.into());
+      }
+    }
+  }
+  Ok(())
 }
 
 #[unsafe(no_mangle)]
@@ -66,89 +111,9 @@ pub unsafe extern "C" fn main(argc: isize, argv: *const *mut c_char) -> c_int {
     return 1;
   }
 
-  // tells kernel to reap child processes automatically, avoiding waitpid
-  let _ = unsafe { signal(SIGCHLD, SIG_IGN).syserr("sigaction") };
-  // handle SIGUSR1
-  unsafe {
-    let act = KernelSigaction::new(handle_sigusr1 as *const () as usize, 0);
-    match sigaction(SIGUSR1, &act, ptr::null_mut()) {
-      Ok(()) => {}
-      Err(_) => die("[rustidle] failed to set action handler"),
-    }
-  }
-
-  let mut conn = match shared::connect_wayland() {
-    Ok(c) => c,
-    Err(e) => {
-      write_wire_diagnostic("[rustidle]", &e);
-      return 1;
-    }
-  };
-
-  let config = match Config::load(config_path) {
-    Ok(c) => c,
-    Err(e) => {
-      e.write_diagnostic();
-      return 1;
-    }
-  };
-  let mut state = State::init(config);
-
-  if let Err(e) = crawl(&mut conn, &mut state) {
-    write_wire_diagnostic("[rustidle]", &e);
+  if let Err(e) = run(config_path) {
+    e.write_diagnostic();
     return 1;
-  }
-
-  let create_notifs = |conn: &mut Connection, state: &mut State| {
-    for i in 0..state.config.entry_len {
-      let notif = &mut state.notifications[i];
-      notif.id = conn.alloc_id();
-      let mut msg = Message::new(
-        state.global.idle_notifier_id,
-        ext_idle_notifier_v1::request::GET_IDLE_NOTIFICATION,
-      );
-      msg.write_u32(notif.id);
-      msg.write_u32(notif.entry.timeout_ms);
-      msg.write_u32(state.global.seat_id);
-
-      conn.send_logged(&msg, None);
-    }
-  };
-
-  create_notifs(&mut conn, &mut state);
-  let mut was_suspended = false;
-
-  // main wayland event dispatch loop
-  loop {
-    if IS_SUSPENDED.load(Ordering::Relaxed) {
-      for i in 0..state.config.entry_len {
-        let notif = &mut state.notifications[i];
-        let msg = Message::new(notif.id, ext_idle_notifier_v1::request::DESTROY);
-        conn.send_logged(&msg, None);
-      }
-      was_suspended = true;
-    }
-
-    while IS_SUSPENDED.load(Ordering::Relaxed) {
-      rustix::event::pause();
-    }
-
-    if was_suspended {
-      create_notifs(&mut conn, &mut state);
-      was_suspended = false;
-    }
-
-    match dispatch_once(&mut conn, &mut state) {
-      Ok(()) => (),
-      Err(ConnectionClosed) => break,
-      Err(e) => {
-        if IS_SUSPENDED.load(Ordering::Relaxed) {
-          continue;
-        }
-        write_wire_diagnostic("[rustidle]", &e);
-        break;
-      }
-    }
   }
   0
 }

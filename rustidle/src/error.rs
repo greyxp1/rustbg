@@ -26,3 +26,9 @@ impl From<WireError> for AppError {
     AppError::Wire(e)
   }
 }
+
+impl From<wllib::wire::MessageError> for AppError {
+  fn from(e: wllib::wire::MessageError) -> Self {
+    AppError::Wire(WireError::Parse(e))
+  }
+}

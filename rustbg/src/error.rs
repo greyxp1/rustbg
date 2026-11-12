@@ -1,6 +1,7 @@
 use shared::error::{write_sys_diagnostic, write_wire_diagnostic};
 use shared::io;
 use wllib::error::{SysError, WireError};
+use wllib::wire::MessageError;
 
 // Application-level errors.
 //
@@ -35,5 +36,11 @@ impl AppError {
 impl From<WireError> for AppError {
   fn from(e: WireError) -> Self {
     AppError::Wire(e)
+  }
+}
+
+impl From<MessageError> for AppError {
+  fn from(e: MessageError) -> Self {
+    AppError::Wire(WireError::Parse(e))
   }
 }

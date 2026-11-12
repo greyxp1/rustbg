@@ -6,7 +6,7 @@ use core::hint::unreachable_unchecked;
 use core::ptr;
 
 use rustix::io::Errno;
-use wllib::fmt_lite::StringOnStack;
+use crate::fmt_lite::StringOnStack;
 
 use crate::env::{get_env, get_envp};
 

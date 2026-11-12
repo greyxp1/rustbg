@@ -8,15 +8,10 @@ mod state;
 use core::ffi::{c_char, c_int};
 
 use shared::cli::{Arg, ArgParser, get_args_iter};
-use shared::error::{ConnectionExt, write_wire_diagnostic};
 use shared::io::{write_stderr, write_stdout};
 use state::{Config, State};
-use wllib::dispatch::dispatch_once;
-use wllib::error::WireError::ConnectionClosed;
-use wllib::protocols::zwlr_gamma_control_manager_v1;
-use wllib::registry::crawl;
-use wllib::wire::Message;
 
+use crate::error::AppError;
 
 const USAGE: &str = concat!(
   "Usage: rustemp -t <kelvin>\n",
@@ -31,6 +26,10 @@ const USAGE: &str = concat!(
 
 fn bad_value() -> ! {
   shared::exit::die("rustemp: invalid or no value supplied\n")
+}
+
+fn run(config: Config) -> Result<(), AppError> {
+  shared::daemon_runner(State::init(config), |conn, state| state.setup_outputs(conn))
 }
 
 fn parse_f64(s: &str) -> Option<f64> {
@@ -109,55 +108,14 @@ pub unsafe extern "C" fn main(argc: isize, argv: *const *mut c_char) -> c_int {
   let mut config = Config::default();
 
   let args_iter = unsafe { get_args_iter(argc as usize, argv) };
-
   if parse_args(args_iter, &mut config).is_none() {
     bad_value()
   }
 
-  let mut conn = match shared::connect_wayland() {
-    Ok(c) => c,
-    Err(e) => {
-      write_wire_diagnostic("[rustemp]", &e);
-      return 1;
-    }
-  };
-
-  let mut state = State::init(config);
-
-  if let Err(e) = crawl(&mut conn, &mut state) {
-    write_wire_diagnostic("[rustemp]", &e);
+  if let Err(e) = run(config) {
+    e.write_diagnostic();
     return 1;
   }
 
-  // setup layer surfaces and gamma control for all monitors.
-  for i in 0..state.output_len {
-    // alloc ids for the new gamma control objects.
-    let gamma_ctrl_id = conn.alloc_id();
-    let output_id = state.outputs[i].output_id;
-
-    // request gamma control
-    let mut gamma_msg = Message::new(
-      state.global.gamma_manager_id,
-      zwlr_gamma_control_manager_v1::request::GET_GAMMA_CONTROL,
-    );
-    gamma_msg.write_u32(gamma_ctrl_id);
-    gamma_msg.write_u32(output_id);
-    conn.send_logged(&gamma_msg, None);
-
-    // store the allocated ids back into our Output instance
-    state.outputs[i].gamma_control_id = gamma_ctrl_id;
-  }
-
-  // main wayland event dispatch loop
-  loop {
-    match dispatch_once(&mut conn, &mut state) {
-      Ok(()) => (),
-      Err(ConnectionClosed) => break,
-      Err(e) => {
-        write_wire_diagnostic("[rustemp]", &e);
-        break;
-      }
-    }
-  }
   0
 }

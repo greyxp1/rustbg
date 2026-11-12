@@ -7,8 +7,8 @@ use core::{ptr, str};
 use rustix::fs::{Mode, OFlags, open};
 use rustix::io::{Errno, read};
 use wllib::error::WireError;
-use wllib::fmt_lite::StringOnStack;
-use wllib::transport::Connection;
+use crate::fmt_lite::StringOnStack;
+use wllib::transport::{Connection, Io};
 
 const ENVIRON_BUF_SIZE: usize = 4096;
 
@@ -129,5 +129,6 @@ pub fn connect_wayland() -> Result<Connection, WireError> {
   if !resolve_wayland_socket(&mut path) {
     return Err(WireError::InvalidPath);
   }
-  Connection::connect_to(path.as_str())
+  let io = Io::connect(path.as_str())?;
+  Ok(Connection::from_io(io))
 }
