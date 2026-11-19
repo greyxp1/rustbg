@@ -32,3 +32,9 @@ impl From<wllib::wire::MessageError> for AppError {
     AppError::Wire(WireError::Parse(e))
   }
 }
+
+impl From<SysError> for AppError {
+  fn from(e: SysError) -> Self {
+    AppError::Sys(e)
+  }
+}

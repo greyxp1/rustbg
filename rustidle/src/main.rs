@@ -7,17 +7,21 @@ pub mod state;
 
 use core::ffi::{c_char, c_int};
 use core::ptr;
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicI32, Ordering};
 
+use rustix::event::{PollFd, PollFlags, poll};
+use rustix::fd::{AsRawFd, BorrowedFd, OwnedFd};
 use rustix::fs::{Access, access};
+use rustix::io::{Errno, read, write};
+use rustix::pipe::{PipeFlags, pipe_with};
 use shared::cli::Arg::Value;
 use shared::cli::{ArgParser, get_args_iter};
 use shared::exit::die;
 use shared::io::write_stderr;
 use shared::signal::{KernelSigaction, sigaction, signal};
-use wllib::dispatch::dispatch_once;
-use wllib::error::SysResultExt;
+use wllib::dispatch::dispatch_pending;
 use wllib::error::WireError::ConnectionClosed;
+use wllib::error::{SysError, SysResultExt};
 use wllib::registry::crawl;
 
 use crate::config::Config;
@@ -28,12 +32,14 @@ const SIGCHLD: c_int = 17;
 const SIGUSR1: c_int = 10;
 const SIG_IGN: usize = 1;
 
-// flag to track the suspended state
-static IS_SUSPENDED: AtomicBool = AtomicBool::new(false);
+// write end of the self-pipe the SIGUSR1 handler writes to.
+static WAKE_FD: AtomicI32 = AtomicI32::new(-1);
 
 extern "C" fn handle_sigusr1(_sig: c_int) {
-  // fetch_xor with true inverts the current boolean value
-  IS_SUSPENDED.fetch_xor(true, Ordering::Relaxed);
+  let fd = WAKE_FD.load(Ordering::Relaxed);
+  if fd >= 0 {
+    let _ = write(unsafe { BorrowedFd::borrow_raw(fd) }, &[1]);
+  }
 }
 
 fn write_usage() -> c_int {
@@ -41,10 +47,25 @@ fn write_usage() -> c_int {
   1
 }
 
+fn drain_wakeups(wake_rx: &OwnedFd) -> usize {
+  let mut total = 0usize;
+  let mut buf = [0u8; 64];
+  while let Ok(n) = read(wake_rx, &mut buf) {
+    if n == 0 {
+      break;
+    }
+    total = total.saturating_add(n);
+  }
+  total
+}
+
 fn run(config_path: &str) -> Result<(), AppError> {
   // tells kernel to reap child processes automatically, avoiding waitpid
   let _ = unsafe { signal(SIGCHLD, SIG_IGN).syserr("sigaction") };
-  // handle SIGUSR1
+
+  // self-pipe
+  let (wake_rx, wake_tx) = pipe_with(PipeFlags::CLOEXEC | PipeFlags::NONBLOCK).syserr("pipe2")?;
+  WAKE_FD.store(wake_tx.as_raw_fd(), Ordering::Relaxed);
   unsafe {
     let act = KernelSigaction::new(handle_sigusr1 as *const () as usize, 0);
     if sigaction(SIGUSR1, &act, ptr::null_mut()).is_err() {
@@ -58,32 +79,39 @@ fn run(config_path: &str) -> Result<(), AppError> {
   crawl(&mut conn, &mut state)?;
 
   state.create_notifications(&mut conn)?;
-  let mut was_suspended = false;
+  let mut suspended = false;
 
-  // main wayland event dispatch loop
   loop {
-    if IS_SUSPENDED.load(Ordering::Relaxed) {
-      state.destroy_notifications(&mut conn)?;
-      was_suspended = true;
+    // handle everything already buffered before sleeping
+    while dispatch_pending(&mut conn, &mut state)? > 0 {}
+
+    let mut fds = [
+      PollFd::new(&conn, PollFlags::IN),
+      PollFd::new(&wake_rx, PollFlags::IN),
+    ];
+    match poll(&mut fds, None) {
+      Ok(_) => {}
+      Err(Errno::INTR) => continue,
+      Err(e) => return Err(SysError::from_errno("poll", e).into()),
+    }
+    let wayland_ready = !fds[0].revents().is_empty();
+    let wake_ready = !fds[1].revents().is_empty();
+
+    // each SIGUSR1 toggles, so an even number of signals since the last wakeup is a no-op
+    if wake_ready && drain_wakeups(&wake_rx) % 2 != 0 {
+      suspended.toggle();
+      if suspended {
+        state.destroy_notifications(&mut conn)?;
+      } else {
+        state.create_notifications(&mut conn)?;
+      }
     }
 
-    while IS_SUSPENDED.load(Ordering::Relaxed) {
-      rustix::event::pause();
-    }
-
-    if was_suspended {
-      state.create_notifications(&mut conn)?;
-      was_suspended = false;
-    }
-
-    match dispatch_once(&mut conn, &mut state) {
-      Ok(()) => (),
-      Err(ConnectionClosed) => break,
-      Err(e) => {
-        if IS_SUSPENDED.load(Ordering::Relaxed) {
-          continue;
-        }
-        return Err(e.into());
+    if wayland_ready {
+      match conn.fill() {
+        Ok(()) => {}
+        Err(ConnectionClosed) => break,
+        Err(e) => return Err(e.into()),
       }
     }
   }
