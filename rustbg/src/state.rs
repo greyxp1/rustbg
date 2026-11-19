@@ -47,7 +47,7 @@ impl Default for Config {
   fn default() -> Self {
     Self {
       image_path: StringOnStack::new(),
-      namespace: *StringOnStack::new().push_str("wallpaper"),
+      namespace: *StringOnStack::new().push("wallpaper"),
       fill: false,
     }
   }
