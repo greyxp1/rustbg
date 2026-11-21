@@ -7,6 +7,7 @@
   symlinkJoin,
   makeWrapper,
   installShellFiles,
+  help2man,
   ffmpeg-headless,
 }: let
   sysroot = symlinkJoin {
@@ -41,8 +42,10 @@ in
       RUSTC_BOOTSTRAP = "1";
       RUSTFLAGS = lib.concatStringsSep " " (builtins.fromTOML (builtins.readFile ../.cargo/config.toml)).build.rustflags;
     };
-    nativeBuildInputs = [makeWrapper installShellFiles];
+    nativeBuildInputs = [makeWrapper installShellFiles help2man];
     postInstall = ''
+      help2man --no-info --name="static wallpapers for Wayland" --version-string="$version" \
+        --include=rustbg.h2m --output=rustbg.1 "$out/bin/rustbg"
       installManPage rustbg.1
     '';
     postFixup = ''

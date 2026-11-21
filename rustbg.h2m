@@ -1,0 +1,10 @@
+[=DESCRIPTION]
+Displays an image on all connected outputs using the Wayland layer-shell protocol.
+Images are scaled to fill the output and center-cropped.
+FFmpeg decodes, scales and optionally blurs the image when loading, then exits.
+
+[REQUIREMENTS]
+Requires FFmpeg on PATH and a compositor supporting wlr-layer-shell.
+[EXIT STATUS]
+Returns 0 when showing help or when the compositor closes the connection normally.
+Returns 1 for invalid arguments, startup failures, or fatal Wayland errors.

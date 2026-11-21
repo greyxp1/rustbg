@@ -25,8 +25,8 @@ const HELP: &str = concat!(
   "Arguments:\n",
   "  IMAGE                 Wallpaper image\n\n",
   "Options:\n",
-  "  -n, --namespace NAME  Layer name [default: wallpaper]\n",
-  "      --blur SIGMA      Blur strength, 0-1024 [default: 0]\n",
+  "  -n, --namespace NAME  Name for compositor layer rules [default: wallpaper]\n",
+  "      --blur SIGMA      Gaussian blur in output pixels (0-1024, default 0 = off)\n",
   "  -h, --help            Show help\n",
 );
 
