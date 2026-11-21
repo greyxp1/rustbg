@@ -5,6 +5,7 @@ mod cli;
 mod entry;
 mod env;
 mod error;
+mod fmt_lite;
 mod image;
 mod io;
 mod process;
@@ -41,17 +42,19 @@ pub unsafe extern "C" fn main(argc: isize, argv: *const *mut c_char) -> c_int {
     return 1;
   }
 
-  state.create_surfaces(&mut conn);
+  if let Err(e) = state.create_surfaces(&mut conn) {
+    write_wire_diagnostic("[rustbg]", &e);
+    return 1;
+  }
 
   loop {
     match dispatch_once(&mut conn, &mut state) {
       Ok(()) => (),
-      Err(ConnectionClosed) => break,
+      Err(ConnectionClosed) => return 0,
       Err(e) => {
         write_wire_diagnostic("[rustbg]", &e);
-        break;
+        return 1;
       }
     }
   }
-  0
 }

@@ -3,8 +3,9 @@ use core::ptr;
 use core::sync::atomic::{AtomicPtr, Ordering};
 
 use wllib::error::WireError;
-use wllib::fmt_lite::StringOnStack;
-use wllib::transport::Connection;
+use wllib::transport::{Connection, Io};
+
+use crate::fmt_lite::StringOnStack;
 
 static ENVP: AtomicPtr<*const c_char> = AtomicPtr::new(ptr::null_mut());
 
@@ -37,7 +38,7 @@ pub fn get_env(key: &str) -> Option<&'static str> {
 pub fn connect_wayland() -> Result<Connection, WireError> {
   let display = get_env("WAYLAND_DISPLAY").unwrap_or("wayland-0");
   if display.starts_with('/') {
-    return Connection::connect_to(display);
+    return Io::connect(display).map(Connection::from_io);
   }
   let runtime = get_env("XDG_RUNTIME_DIR")
     .ok_or(WireError::InvalidPath)?
@@ -47,5 +48,5 @@ pub fn connect_wayland() -> Result<Connection, WireError> {
     return Err(WireError::InvalidPath);
   }
   path.push(runtime).push("/").push(display);
-  Connection::connect_to(path.as_str())
+  Io::connect(path.as_str()).map(Connection::from_io)
 }

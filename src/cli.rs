@@ -1,7 +1,7 @@
 use core::ffi::{CStr, c_char};
 use rustix::fs::{Access, access};
-use wllib::fmt_lite::StringOnStack;
 
+use crate::fmt_lite::StringOnStack;
 use crate::io::{write_stderr, write_stdout};
 
 pub struct Config {
@@ -13,7 +13,7 @@ impl Default for Config {
   fn default() -> Self {
     Self {
       image_path: StringOnStack::new(),
-      namespace: *StringOnStack::new().push_str("wallpaper"),
+      namespace: StringOnStack::from("wallpaper"),
       blur: 0,
     }
   }
@@ -90,7 +90,7 @@ pub unsafe fn parse(argc: isize, argv: *const *mut c_char) -> Result<Config, i32
           .filter(|&n| n <= 1024)
           .ok_or_else(|| invalid("blur must be an integer between 0 and 1024"))?;
       } else {
-        // The layer-shell request must fit wllib's 256-byte message.
+        // The layer-shell request must fit the 256-byte message buffer.
         if value.is_empty() || value.len() > 227 {
           return Err(invalid("namespace must contain 1-227 bytes"));
         }

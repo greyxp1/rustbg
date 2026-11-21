@@ -31,7 +31,7 @@ in
       paths = [
         (platform.importCargoLock {
           lockFile = ../Cargo.lock;
-          outputHashes."wllib-0.1.0" = "sha256-3ujv1uZZ4Je+xDCheSS2nTBGYytzqV7FIoNHHxkCVB8=";
+          outputHashes."wllib-0.1.0" = "sha256-E6gAnb+I5GQdOpkGlXVIllsnvTbn3eSP4pzVFoDGYHM=";
         })
         "${rustPlatform.rustLibSrc}/vendor"
       ];
