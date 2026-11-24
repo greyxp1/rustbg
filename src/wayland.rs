@@ -3,8 +3,10 @@ use crate::io::write_stderr;
 use rustix::fd::AsFd;
 use wllib::dispatch::EventHandler;
 use wllib::error::WireError;
+use wllib::protocols::wl_registry::{self, REGISTRY_ID};
 use wllib::protocols::{
-  wl_compositor, wl_shm, wl_shm_pool, wl_surface, zwlr_layer_shell_v1, zwlr_layer_surface_v1,
+  wl_compositor, wl_output, wl_shm, wl_shm_pool, wl_surface, zwlr_layer_shell_v1,
+  zwlr_layer_surface_v1,
 };
 use wllib::registry::{GlobalHandler, bind, clamp_version};
 use wllib::transport::{Connection, Ctx};
@@ -24,7 +26,9 @@ struct Global {
 
 #[derive(Default)]
 struct Output {
+  name: u32,
   output_id: u32,
+  output_version: u32,
   wl_surface_id: u32,
   layer_surface_id: u32,
   buffer_id: u32,
@@ -34,7 +38,6 @@ struct Output {
 pub struct State {
   global: Global,
   outputs: [Output; MAX_OUTPUTS],
-  output_len: usize,
   config: Config,
 }
 impl State {
@@ -43,22 +46,33 @@ impl State {
     Self {
       global: Global::default(),
       outputs: core::array::from_fn(|_| Output::default()),
-      output_len: 0,
       config,
     }
   }
 
   pub fn create_surfaces(&mut self, conn: &mut Connection) -> Result<(), WireError> {
-    for i in 0..self.output_len {
-      let surf_id = conn.alloc_id()?;
-      let layer_surf_id = conn.alloc_id()?;
-      let output_id = self.outputs[i].output_id;
+    self.create_missing_surfaces(&mut conn.split().1)
+  }
+
+  // Runs after the registry crawl and after every later global, so hotplugged outputs get a
+  // surface once the compositor and layer shell are known.
+  fn create_missing_surfaces(&mut self, cx: &mut Ctx<'_>) -> Result<(), WireError> {
+    if self.global.compositor_id == 0 || self.global.layer_shell_id == 0 {
+      return Ok(());
+    }
+    for out in &mut self.outputs {
+      if out.output_id == 0 || out.wl_surface_id != 0 {
+        continue;
+      }
+      let surf_id = cx.alloc()?;
+      let layer_surf_id = cx.alloc()?;
+      let output_id = out.output_id;
 
       let mut surf_msg = Writer::<16>::new(
         self.global.compositor_id,
         wl_compositor::request::CREATE_SURFACE,
       );
-      conn.send(surf_msg.u32(surf_id).finish()?, &[])?;
+      cx.send(surf_msg.u32(surf_id).finish()?, &[])?;
 
       let mut ls_msg = Writer::<256>::new(
         self.global.layer_shell_id,
@@ -70,11 +84,11 @@ impl State {
         .u32(output_id)
         .u32(zwlr_layer_shell_v1::layer::BACKGROUND)
         .str(self.config.namespace.as_str());
-      conn.send(ls_msg.finish()?, &[])?;
+      cx.send(ls_msg.finish()?, &[])?;
 
       let mut anchor_msg =
         Writer::<16>::new(layer_surf_id, zwlr_layer_surface_v1::request::SET_ANCHOR);
-      conn.send(
+      cx.send(
         anchor_msg
           .u32(zwlr_layer_surface_v1::anchor::ALL)
           .finish()?,
@@ -85,14 +99,46 @@ impl State {
         layer_surf_id,
         zwlr_layer_surface_v1::request::SET_EXCLUSIVE_ZONE,
       );
-      conn.send(ex_msg.i32(-1).finish()?, &[])?;
+      cx.send(ex_msg.i32(-1).finish()?, &[])?;
 
       let mut commit_msg = Writer::<8>::new(surf_id, wl_surface::request::COMMIT);
-      conn.send(commit_msg.finish()?, &[])?;
+      cx.send(commit_msg.finish()?, &[])?;
 
-      self.outputs[i].wl_surface_id = surf_id;
-      self.outputs[i].layer_surface_id = layer_surf_id;
+      out.wl_surface_id = surf_id;
+      out.layer_surface_id = layer_surf_id;
     }
+    Ok(())
+  }
+
+  // A closed surface keeps its output bound so the next global can recreate it if the output is
+  // still around.
+  fn destroy_surface(cx: &Ctx<'_>, out: &mut Output) -> Result<(), WireError> {
+    for (id, opcode) in [
+      (
+        out.layer_surface_id,
+        zwlr_layer_surface_v1::request::DESTROY,
+      ),
+      (out.wl_surface_id, wl_surface::request::DESTROY),
+      (out.buffer_id, WL_BUFFER_DESTROY),
+    ] {
+      if id != 0 {
+        cx.send(Writer::<8>::new(id, opcode).finish()?, &[])?;
+      }
+    }
+    out.layer_surface_id = 0;
+    out.wl_surface_id = 0;
+    out.buffer_id = 0;
+    out.size = (0, 0);
+    Ok(())
+  }
+
+  fn remove_output(cx: &Ctx<'_>, out: &mut Output) -> Result<(), WireError> {
+    Self::destroy_surface(cx, out)?;
+    if out.output_version >= 3 {
+      let mut release = Writer::<8>::new(out.output_id, wl_output::request::RELEASE);
+      cx.send(release.finish()?, &[])?;
+    }
+    *out = Output::default();
     Ok(())
   }
 
@@ -195,14 +241,19 @@ impl GlobalHandler for State {
       "wl_shm" => (2, &mut self.global.shm_id),
       "zwlr_layer_shell_v1" => (5, &mut self.global.layer_shell_id),
       "wl_output" => {
-        if self.output_len >= MAX_OUTPUTS {
+        let Some(out) = self.outputs.iter_mut().find(|out| out.output_id == 0) else {
           write_stderr("Maximum outputs limit reached\n");
           return Ok(());
-        }
+        };
         let id = cx.alloc()?;
-        bind(cx, name, interface, clamp_version(4, version), id)?;
-        self.outputs[self.output_len].output_id = id;
-        self.output_len += 1;
+        let version = clamp_version(4, version);
+        bind(cx, name, interface, version, id)?;
+        *out = Output {
+          name,
+          output_id: id,
+          output_version: version,
+          ..Output::default()
+        };
         return Ok(());
       }
       _ => return Ok(()),
@@ -216,13 +267,41 @@ impl GlobalHandler for State {
 
 impl EventHandler for State {
   fn handle_event(&mut self, cx: &mut Ctx<'_>, msg: Message<'_>) -> Result<(), WireError> {
-    if msg.header.opcode == zwlr_layer_surface_v1::event::CONFIGURE
-      && let Some(out) = self.outputs[..self.output_len]
-        .iter_mut()
-        .find(|out| out.layer_surface_id == msg.header.object_id)
-    {
-      Self::handle_layer_surface(cx, out, &self.config, self.global.shm_id, msg)?;
+    let header = msg.header;
+    if header.object_id == REGISTRY_ID {
+      let mut r = msg.args();
+      let name = r.u32()?;
+      if header.opcode == wl_registry::event::GLOBAL {
+        let interface = r.str()?;
+        let version = r.u32()?;
+        r.finish()?;
+        self.on_global(cx, name, interface, version)?;
+        return self.create_missing_surfaces(cx);
+      }
+      r.finish()?;
+      if header.opcode == wl_registry::event::GLOBAL_REMOVE
+        && let Some(out) = self
+          .outputs
+          .iter_mut()
+          .find(|out| out.output_id != 0 && out.name == name)
+      {
+        Self::remove_output(cx, out)?;
+      }
+      return Ok(());
     }
-    Ok(())
+    let Some(out) = self
+      .outputs
+      .iter_mut()
+      .find(|out| out.layer_surface_id != 0 && out.layer_surface_id == header.object_id)
+    else {
+      return Ok(());
+    };
+    match header.opcode {
+      zwlr_layer_surface_v1::event::CONFIGURE => {
+        Self::handle_layer_surface(cx, out, &self.config, self.global.shm_id, msg)
+      }
+      zwlr_layer_surface_v1::event::CLOSED => Self::destroy_surface(cx, out),
+      _ => Ok(()),
+    }
   }
 }
